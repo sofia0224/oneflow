@@ -2964,10 +2964,10 @@ def rrelu(
 
         \text{RReLU}(x) = \begin{cases}
 				x & \text{ if } x \ge 0  \\
-                \alpha*x & \text{ if } x \lt 0 \\
+                \ax & \text{ if } x \lt 0 \\
     		    \end{cases}
 
-    where alpha is randomly sampled from uniform distribution \mathcal{U}(\text{lower}, \text{upper})U(lower,upper).
+    where math:`a` is randomly sampled from uniform distribution \mathcal{U}(\text{lower}, \text{upper})U(lower,upper).
 
     For more details you can check the Paper `Empirical Evaluation of Rectified Activations in Convolutional Network.`.
     
