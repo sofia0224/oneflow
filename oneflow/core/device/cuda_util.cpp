@@ -91,6 +91,18 @@ void InitGlobalCudaDeviceProp() {
   }
 }
 
+void ForceCudaContext() {
+  int dev_cnt;
+  OF_CUDA_CHECK(cudaGetDeviceCount(&dev_cnt));
+  for (int i = 0; i < dev_cnt; ++i) {
+    auto thread = std::thread([=]() {
+      OF_CUDA_CHECK(cudaSetDevice(i));
+      OF_CUDA_CHECK(cudaFree(nullptr));
+    });
+    thread.detach();
+  }
+}
+
 int32_t GetSMCudaMaxBlocksNum() {
   const auto& global_device_prop = *Global<cudaDeviceProp>::Get();
   int32_t n =

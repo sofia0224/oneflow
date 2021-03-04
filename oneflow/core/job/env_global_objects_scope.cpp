@@ -99,6 +99,7 @@ Maybe<void> EnvGlobalObjectsScope::Init(const EnvProto& env_proto) {
   InitLogging(env_proto.cpp_logging_conf());
 #ifdef WITH_CUDA
   InitGlobalCudaDeviceProp();
+  ForceCudaContext();
 #endif
   Global<EnvDesc>::New(env_proto);
   Global<CtrlServer>::New(JUST(GetCtrlPort(*Global<EnvDesc>::Get())));
