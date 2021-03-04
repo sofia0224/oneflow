@@ -245,6 +245,8 @@ CudaCurrentDeviceGuard::CudaCurrentDeviceGuard() { OF_CUDA_CHECK(cudaGetDevice(&
 
 CudaCurrentDeviceGuard::~CudaCurrentDeviceGuard() { OF_CUDA_CHECK(cudaSetDevice(saved_dev_id_)); }
 
+COMMAND(ForceCudaContext());
+
 #endif  // WITH_CUDA
 
 }  // namespace oneflow

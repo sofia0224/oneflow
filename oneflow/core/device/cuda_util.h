@@ -108,7 +108,6 @@ const int32_t kCudaMaxSharedMemoryByteSize = 48 << 10;
 
 int32_t GetSMCudaMaxBlocksNum();
 void InitGlobalCudaDeviceProp();
-void ForceCudaContext();
 bool IsCuda9OnTuringDevice();
 
 inline int32_t BlocksNum4ThreadsNum(const int32_t n) {
