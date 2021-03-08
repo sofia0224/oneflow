@@ -355,7 +355,6 @@ Maybe<void> UserOp::InferInternalBlobDescs(
     const std::function<BlobDesc*(const std::string&)>& GetBlobDesc4BnInOp,
     const ParallelContext* parallel_ctx, const JobDesc* job_desc) const {
   // tmp buffer size must be inferred after out shape/dtype
-  const auto sbp_signature = JUST(this->sbp_signature());
   UserOpInferContext infer_ctx(this, parallel_ctx, job_desc, GetBlobDesc4BnInOp);
   const user_op::OpKernelRegistryResult* kernel_reg_val =
       JUST(user_op::UserOpRegistryMgr::Get().GetOpKernelRegistryResult(
@@ -413,7 +412,6 @@ Maybe<void> UserOp::InferOutBlobDescs(
       GetBlobDesc4BnInOp(obn)->CopyFrom(*first_in_blob_desc);
     }
   }
-  const auto sbp_signature = JUST(this->sbp_signature());
   UserOpInferContext infer_ctx(this, parallel_ctx, nullptr, GetBlobDesc4BnInOp);
 
   JUST(val_->physical_tensor_desc_infer_fn(&infer_ctx));
