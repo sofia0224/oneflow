@@ -165,7 +165,7 @@ class UserKernelInitContext final : public user_op::KernelInitContext {
 class UserKernelOpInferContext : public user_op::InferContext {
  public:
   UserKernelOpInferContext(const OperatorConf& op_conf, const JobDesc* job_desc)
-      : user_op::InferContext(user_op::UserOpConfWrapper(op_conf)), job_desc_(job_desc) {
+      : user_op_conf_(op_conf), job_desc_(job_desc) {
     auto* bn2sbp = sbp_signature_.mutable_bn_in_op2sbp_parallel();
     auto InitArgs7TensorDesc7Sbp = [&](const PbMap<std::string, UserOpConf::ListString>& arg_map,
                                        ArgVec* arg_vec) {
@@ -185,7 +185,7 @@ class UserKernelOpInferContext : public user_op::InferContext {
     parallel_ctx_.set_parallel_id(0);
     parallel_ctx_.set_parallel_num(1);
   }
-  ~UserKernelOpInferContext() = default;
+  ~UserKernelOpInferContext() override = default;
 
   user_op::TensorDesc* TensorDesc4ArgNameAndIndex(const std::string& arg_name,
                                                   int32_t index) override {
@@ -236,7 +236,10 @@ class UserKernelOpInferContext : public user_op::InferContext {
 
   int64_t parallel_num() const override { return parallel_ctx_.parallel_num(); }
 
+  const user_op::UserOpConfWrapper& user_op_conf() const override { return user_op_conf_; }
+
  private:
+  user_op::UserOpConfWrapper user_op_conf_;
   const JobDesc* job_desc_;
   ArgVec inputs_;
   ArgVec outputs_;

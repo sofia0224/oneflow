@@ -42,6 +42,7 @@ class UserOp final : public Operator {
       const std::function<BlobDesc*(const std::string&)>& GetBlobDesc4BnInOp,
       const ParallelContext* parallel_ctx) const override;
   Symbol<OperatorConf> GetOpConfWithoutOpNameAndLbn() const override;
+  const user_op::UserOpConfWrapper& user_op_conf() const;
 
  private:
   LogicalBlobId lbi4ibn(const std::string& input_bn) const override;
@@ -62,6 +63,7 @@ class UserOp final : public Operator {
                             KernelConf* kernel_conf) const override;
 
   const user_op::OpRegistryResult* val_;
+  std::unique_ptr<user_op::UserOpConfWrapper> user_op_conf_;
 };
 
 }  // namespace oneflow
