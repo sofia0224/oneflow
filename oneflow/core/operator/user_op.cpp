@@ -306,11 +306,10 @@ class UserOpInferSbpSignatureFnContext : public user_op::InferSbpSignatureFnCont
 class UserOpInferOutputBlobTimeShapeFnContext : public user_op::InferOutputBlobTimeShapeFnContext {
  public:
   UserOpInferOutputBlobTimeShapeFnContext(
-      const OperatorConf& op_conf,
-      const std::function<const Shape*(const std::string&)>& GetTimeShape4BnInOp,
+      const UserOp* op, const std::function<const Shape*(const std::string&)>& GetTimeShape4BnInOp,
       Shape* output_blob_time_shape)
-      : user_op_conf_(op_conf), output_blob_time_shape_(output_blob_time_shape) {
-    for (const auto& it : op_conf.user_conf().input()) {
+      : op_(op), output_blob_time_shape_(output_blob_time_shape) {
+    for (const auto& it : op->op_conf().user_conf().input()) {
       const std::string& arg_name = it.first;
       for (int32_t i = 0; i < it.second.s_size(); ++i) {
         std::string ibn = GenRepeatedBn(arg_name, i);
@@ -324,13 +323,13 @@ class UserOpInferOutputBlobTimeShapeFnContext : public user_op::InferOutputBlobT
     return arg2time_shape_.at(std::make_pair(arg_name, index));
   }
 
-  const user_op::UserOpConfWrapper& user_op_conf() const override { return user_op_conf_; }
+  const user_op::UserOpConfWrapper& user_op_conf() const override { return op_->user_op_conf(); }
 
   Shape* mut_output_blob_time_shape() override { return output_blob_time_shape_; };
 
  private:
+  const UserOp* op_;
   HashMap<std::pair<std::string, int32_t>, Shape> arg2time_shape_;
-  user_op::UserOpConfWrapper user_op_conf_;
   Shape* output_blob_time_shape_;
 };
 
@@ -585,7 +584,7 @@ Maybe<void> UserOp::InferOpTimeShape(
     Shape* time_shape) const {
   if (val_->infer_output_blob_time_shape_fn) {
     UserOpInferOutputBlobTimeShapeFnContext infer_output_blob_time_shape_fn_ctx(
-        this->op_conf(), GetTimeShape4BnInOp, time_shape);
+        this, GetTimeShape4BnInOp, time_shape);
     return val_->infer_output_blob_time_shape_fn(&infer_output_blob_time_shape_fn_ctx);
   } else {
     return Operator::InferOpTimeShape(GetTimeShape4BnInOp, time_shape);
