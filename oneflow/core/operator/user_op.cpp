@@ -118,9 +118,9 @@ class UserOpInferContext : public user_op::InferContext {
     auto InitTensorDesc =
         [&](const PbMap<std::string, UserOpConf::ListString>& arg_map,
             const std::function<const BlobDesc*(const std::string&)>& GetLogicalBlobDesc4BnInOp) {
-          for (auto it = arg_map.begin(); it != arg_map.end(); ++it) {
-            const std::string& arg_name = it->first;
-            for (int32_t i = 0; i < it->second.s_size(); ++i) {
+          for (const auto& it : arg_map) {
+            const std::string& arg_name = it.first;
+            for (int32_t i = 0; i < it.second.s_size(); ++i) {
               BlobDesc* blob = GetBlobDesc4BnInOp(GenRepeatedBn(arg_name, i));
               auto key = std::make_pair(arg_name, i);
               arg2tensor_desc_.emplace(key, GenTensorDescFromBlobDesc(blob));
@@ -210,39 +210,41 @@ class UserOpSbpContext : public user_op::SbpContext {
  public:
   using ArgVec = std::vector<std::pair<std::string, int32_t>>;
 
-  UserOpSbpContext(const OperatorConf& op_conf, SbpSignatureList* sbp_sig_list,
-                   DeviceType device_type, int64_t parallel_num,
+  UserOpSbpContext(const UserOp* op, SbpSignatureList* sbp_sig_list,
                    std::function<Maybe<const BlobDesc&>(const std::string&)> LogicalBlobDesc4Ibn)
-      : user_op::SbpContext(user_op::UserOpConfWrapper(op_conf), sbp_sig_list, device_type,
-                            parallel_num) {
-    const auto& user_op_conf = op_conf.user_conf();
+      : op_(op), sbp_sig_list_(sbp_sig_list) {
+    const auto& user_op_conf = op->op_conf().user_conf();
     for (auto it = user_op_conf.input().begin(); it != user_op_conf.input().end(); ++it) {
       const std::string& arg_name = it->first;
       for (int32_t i = 0; i < it->second.s_size(); ++i) {
         const BlobDesc* blob = &CHECK_JUST(LogicalBlobDesc4Ibn(GenRepeatedBn(arg_name, i)));
         arg2tensor_desc_.emplace(std::make_pair(arg_name, i), GenTensorDescFromBlobDesc(blob));
-        inputs_.emplace_back(std::make_pair(arg_name, i));
-      }
-    }
-    for (auto it = user_op_conf.output().begin(); it != user_op_conf.output().end(); ++it) {
-      const std::string& arg_name = it->first;
-      for (int32_t i = 0; i < it->second.s_size(); ++i) {
-        outputs_.emplace_back(std::make_pair(arg_name, i));
       }
     }
   }
-  ~UserOpSbpContext() = default;
+  ~UserOpSbpContext() override = default;
 
   const user_op::TensorDesc& LogicalTensorDesc4InputArgNameAndIndex(
       const std::string& input_arg_name, int32_t index) const override {
     return arg2tensor_desc_.at(std::make_pair(input_arg_name, index));
   }
-  const ArgVec& inputs() const override { return inputs_; }
-  const ArgVec& outputs() const override { return outputs_; }
+  const ArgVec& inputs() const override { return op_->inputs(); }
+  const ArgVec& outputs() const override { return op_->outputs(); }
+  const user_op::UserOpConfWrapper& user_op_conf() const override { return op_->user_op_conf(); }
+
+  user_op::UserOpSbpSignatureBuilder NewBuilder() override {
+    return user_op::UserOpSbpSignatureBuilder(sbp_sig_list_);
+  }
+
+  DeviceType device_type() const override { return op_->device_type(); }
+
+  int64_t parallel_num() const override {
+    return CHECK_JUST(op_->GetOpParallelDesc())->parallel_num();
+  }
 
  private:
-  ArgVec inputs_;
-  ArgVec outputs_;
+  const UserOp* op_;
+  SbpSignatureList* sbp_sig_list_;
   HashMap<std::pair<std::string, int32_t>, user_op::TensorDesc> arg2tensor_desc_;
 };
 
@@ -251,15 +253,13 @@ class UserOpInferSbpSignatureFnContext : public user_op::InferSbpSignatureFnCont
   using ArgVec = std::vector<std::pair<std::string, int32_t>>;
 
   UserOpInferSbpSignatureFnContext(
-      const OperatorConf& op_conf, SbpSignature* signature, const SbpSignature& sbp_signature_conf,
-      DeviceType device_type, int64_t parallel_num,
+      const UserOp* op, SbpSignature* signature, const SbpSignature& sbp_signature_conf,
       std::function<Maybe<const SbpInferHint*>(const std::string&)> SbpInferHint4Ibn)
-      : user_op::InferSbpSignatureFnContext(user_op::UserOpConfWrapper(op_conf), device_type,
-                                            parallel_num),
+      : op_(op),
         signature_(signature),
         sbp_signature_conf_(sbp_signature_conf),
         sbp_infer_hint4ibn_fn_(std::move(SbpInferHint4Ibn)) {
-    const auto& user_op_conf = op_conf.user_conf();
+    const auto& user_op_conf = op->op_conf().user_conf();
     for (const auto& it : user_op_conf.input()) {
       const std::string& arg_name = it.first;
       for (int32_t i = 0; i < it.second.s_size(); ++i) {
@@ -267,13 +267,6 @@ class UserOpInferSbpSignatureFnContext : public user_op::InferSbpSignatureFnCont
         arg2tensor_desc_.emplace(std::make_pair(arg_name, i),
                                  GenTensorDescFromBlobDesc(&hint->logical_blob_desc()));
         arg2sbp_parallel_hint_.emplace(std::make_pair(arg_name, i), hint->sbp_parallel());
-        inputs_.emplace_back(std::make_pair(arg_name, i));
-      }
-    }
-    for (const auto& it : user_op_conf.output()) {
-      const std::string& arg_name = it.first;
-      for (int32_t i = 0; i < it.second.s_size(); ++i) {
-        outputs_.emplace_back(std::make_pair(arg_name, i));
       }
     }
   }
@@ -283,8 +276,8 @@ class UserOpInferSbpSignatureFnContext : public user_op::InferSbpSignatureFnCont
       const std::string& input_arg_name, int32_t index) const override {
     return arg2tensor_desc_.at(std::make_pair(input_arg_name, index));
   }
-  const ArgVec& inputs() const override { return inputs_; }
-  const ArgVec& outputs() const override { return outputs_; }
+  const ArgVec& inputs() const override { return op_->inputs(); }
+  const ArgVec& outputs() const override { return op_->outputs(); }
   SbpSignature* mutable_sbp_signature() override { return signature_; }
   const SbpSignature& sbp_signature_conf() const override { return sbp_signature_conf_; }
 
@@ -293,9 +286,16 @@ class UserOpInferSbpSignatureFnContext : public user_op::InferSbpSignatureFnCont
     return arg2sbp_parallel_hint_.at(std::make_pair(input_arg_name, index));
   }
 
+  const user_op::UserOpConfWrapper& user_op_conf() const override { return op_->user_op_conf(); }
+
+  DeviceType device_type() const override { return op_->device_type(); }
+
+  int64_t parallel_num() const override {
+    return CHECK_JUST(op_->GetOpParallelDesc())->parallel_num();
+  }
+
  private:
-  ArgVec inputs_;
-  ArgVec outputs_;
+  const UserOp* op_;
   HashMap<std::pair<std::string, int32_t>, user_op::TensorDesc> arg2tensor_desc_;
   HashMap<std::pair<std::string, int32_t>, SbpParallel> arg2sbp_parallel_hint_;
   SbpSignature* signature_;
@@ -305,7 +305,6 @@ class UserOpInferSbpSignatureFnContext : public user_op::InferSbpSignatureFnCont
 
 class UserOpInferOutputBlobTimeShapeFnContext : public user_op::InferOutputBlobTimeShapeFnContext {
  public:
-  using ArgVec = std::vector<std::pair<std::string, int32_t>>;
   UserOpInferOutputBlobTimeShapeFnContext(
       const OperatorConf& op_conf,
       const std::function<const Shape*(const std::string&)>& GetTimeShape4BnInOp,
@@ -452,7 +451,6 @@ Maybe<void> UserOp::InferOutBlobDescs(
     auto LogicalBlobDesc4Obn = [&](const std::string& bn) -> const BlobDesc& {
       return *CHECK_JUST(GetLogicalBlobDesc4Obn(bn));
     };
-    const auto sbp_signature = JUST(this->sbp_signature());
     UserOpInferContext infer_ctx(this, parallel_ctx, nullptr, GetBlobDesc4BnInOp,
                                  LogicalBlobDesc4Ibn, LogicalBlobDesc4Obn);
 
@@ -530,9 +528,7 @@ Maybe<void> UserOp::InferSbpSignature(
     std::function<Maybe<const SbpInferHint*>(const std::string&)> SbpInferHint4Ibn,
     const ParallelDesc& parallel_desc) const {
   if (val_->infer_sbp_signature_fn) {
-    UserOpInferSbpSignatureFnContext ctx(op_conf(), sbp_signature, sbp_sig_conf,
-                                         parallel_desc.device_type(), parallel_desc.parallel_num(),
-                                         SbpInferHint4Ibn);
+    UserOpInferSbpSignatureFnContext ctx(this, sbp_signature, sbp_sig_conf, SbpInferHint4Ibn);
     return val_->infer_sbp_signature_fn(&ctx);
   } else {
     return Operator::InferSbpSignature(sbp_signature, sbp_sig_conf, CalcOrderValue4SbpSig,
@@ -545,8 +541,7 @@ Maybe<void> UserOp::GetSbpSignatures(
     const ParallelDesc& parallel_desc, SbpSignatureList* sbp_sig_list) const {
   CHECK_OR_RETURN(val_ != nullptr)
       << "cannot find op_type: " << op_conf().user_conf().op_type_name() << " in op registry!";
-  UserOpSbpContext sbp_ctx(op_conf(), sbp_sig_list, parallel_desc.device_type(),
-                           parallel_desc.parallel_num(), LogicalBlobDesc4Ibn);
+  UserOpSbpContext sbp_ctx(this, sbp_sig_list, LogicalBlobDesc4Ibn);
   JUST(val_->get_sbp_fn(&sbp_ctx));
   // Add Broadcast for source user op tick input
   std::string tick_bn = GenRepeatedBn(user_op::kUserSourceOpTickInputArgName, 0);
