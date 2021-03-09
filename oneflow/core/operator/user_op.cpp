@@ -111,24 +111,39 @@ class UserOpInferContext : public user_op::InferContext {
   using ArgVec = std::vector<std::pair<std::string, int32_t>>;
 
   UserOpInferContext(const UserOp* op, const ParallelContext* parallel_ctx, const JobDesc* job_desc,
-                     std::function<BlobDesc*(const std::string&)> GetBlobDesc4BnInOp)
+                     std::function<BlobDesc*(const std::string&)> GetBlobDesc4BnInOp,
+                     std::function<const BlobDesc&(const std::string&)> GetLogicalBlobDesc4Ibn,
+                     std::function<const BlobDesc&(const std::string&)> GetLogicalBlobDesc4Obn)
       : op_(op), parallel_ctx_(parallel_ctx), job_desc_(job_desc) {
-    auto InitInOrOut = [&](const PbMap<std::string, UserOpConf::ListString>& arg_map,
-                           ArgVec* arg_vec) {
-      for (auto it = arg_map.begin(); it != arg_map.end(); ++it) {
-        const std::string& arg_name = it->first;
-        for (int32_t i = 0; i < it->second.s_size(); ++i) {
-          BlobDesc* blob = GetBlobDesc4BnInOp(GenRepeatedBn(arg_name, i));
-          auto key = std::make_pair(arg_name, i);
-          arg2tensor_desc_.emplace(key, GenTensorDescFromBlobDesc(blob));
-          arg_vec->emplace_back(std::make_pair(arg_name, i));
-        }
-      }
+    auto InitTensorDesc =
+        [&](const PbMap<std::string, UserOpConf::ListString>& arg_map, ArgVec* arg_vec,
+            const std::function<const BlobDesc*(const std::string&)>& GetLogicalBlobDesc4BnInOp) {
+          for (auto it = arg_map.begin(); it != arg_map.end(); ++it) {
+            const std::string& arg_name = it->first;
+            for (int32_t i = 0; i < it->second.s_size(); ++i) {
+              BlobDesc* blob = GetBlobDesc4BnInOp(GenRepeatedBn(arg_name, i));
+              auto key = std::make_pair(arg_name, i);
+              arg2tensor_desc_.emplace(key, GenTensorDescFromBlobDesc(blob));
+              const BlobDesc* logical_blob_desc =
+                  GetLogicalBlobDesc4BnInOp(GenRepeatedBn(arg_name, i));
+              if (logical_blob_desc != nullptr) {
+                arg2logical_tensor_desc_.emplace(key, GenTensorDescFromBlobDesc(logical_blob_desc));
+              }
+              arg_vec->emplace_back(std::make_pair(arg_name, i));
+            }
+          }
+        };
+    auto LogicalBlobDesc4Ibn = [&](const std::string& bn) -> const BlobDesc* {
+      if (GetLogicalBlobDesc4Ibn == nullptr) { return nullptr; }
+      return &GetLogicalBlobDesc4Ibn(bn);
     };
-    inputs_.reserve(op->input_bns().size());
-    outputs_.reserve(op->output_bns().size());
-    InitInOrOut(op->op_conf().user_conf().input(), &inputs_);
-    InitInOrOut(op->op_conf().user_conf().output(), &outputs_);
+    auto LogicalBlobDesc4Obn = [&](const std::string& bn) -> const BlobDesc* {
+      if (GetLogicalBlobDesc4Obn == nullptr) { return nullptr; }
+      return &GetLogicalBlobDesc4Obn(bn);
+    };
+
+    InitTensorDesc(op->op_conf().user_conf().input(), &inputs_, LogicalBlobDesc4Ibn);
+    InitTensorDesc(op->op_conf().user_conf().output(), &outputs_, LogicalBlobDesc4Obn);
   }
   ~UserOpInferContext() override = default;
 
@@ -136,6 +151,13 @@ class UserOpInferContext : public user_op::InferContext {
                                                   int32_t index) override {
     auto it = arg2tensor_desc_.find(std::make_pair(arg_name, index));
     if (it == arg2tensor_desc_.end()) { return nullptr; };
+    return &(it->second);
+  }
+  const user_op::TensorDesc* LogicalTensorDesc4ArgNameAndIndex(const std::string& arg_name,
+                                                               int32_t index) const override {
+    auto it = arg2logical_tensor_desc_.find(std::make_pair(arg_name, index));
+    CHECK(it != arg2logical_tensor_desc_.end())
+        << "Arg (" << arg_name << "," << index << ") is not found";
     return &(it->second);
   }
   Shape* Shape4ArgNameAndIndex(const std::string& arg_name, int32_t index) override {
@@ -184,6 +206,7 @@ class UserOpInferContext : public user_op::InferContext {
   const ParallelContext* parallel_ctx_;
   const JobDesc* job_desc_;
   HashMap<std::pair<std::string, int32_t>, user_op::TensorDesc> arg2tensor_desc_;
+  HashMap<std::pair<std::string, int32_t>, user_op::TensorDesc> arg2logical_tensor_desc_;
 };
 
 class UserOpSbpContext : public user_op::SbpContext {
@@ -355,7 +378,7 @@ Maybe<void> UserOp::InferInternalBlobDescs(
     const std::function<BlobDesc*(const std::string&)>& GetBlobDesc4BnInOp,
     const ParallelContext* parallel_ctx, const JobDesc* job_desc) const {
   // tmp buffer size must be inferred after out shape/dtype
-  UserOpInferContext infer_ctx(this, parallel_ctx, job_desc, GetBlobDesc4BnInOp);
+  UserOpInferContext infer_ctx(this, parallel_ctx, job_desc, GetBlobDesc4BnInOp, nullptr, nullptr);
   const user_op::OpKernelRegistryResult* kernel_reg_val =
       JUST(user_op::UserOpRegistryMgr::Get().GetOpKernelRegistryResult(
           op_conf().user_conf().op_type_name(),
@@ -387,7 +410,7 @@ Maybe<void> UserOp::InferLogicalOutBlobDescs(
     }
   }
 
-  UserOpInferContext infer_ctx(this, nullptr, nullptr, BlobDesc4BnInOp);
+  UserOpInferContext infer_ctx(this, nullptr, nullptr, BlobDesc4BnInOp, nullptr, nullptr);
 
   JUST(val_->logical_tensor_desc_infer_fn(&infer_ctx));
   for (const auto& pair : infer_ctx.outputs()) {
@@ -400,28 +423,40 @@ Maybe<void> UserOp::InferLogicalOutBlobDescs(
 }
 
 Maybe<void> UserOp::InferOutBlobDescs(
-    std::function<BlobDesc*(const std::string&)> GetBlobDesc4BnInOp,
+    const std::function<BlobDesc*(const std::string&)>& GetBlobDesc4BnInOp,
     const ParallelContext* parallel_ctx) const {
   CHECK_OR_RETURN(val_ != nullptr)
       << "cannot find op_type: " << op_conf().user_conf().op_type_name() << " in op registry!";
-  // default method set output blob desc (such as Dtype, is_dynamic)
-  // set out blob desc attr as first input blob desc (if has)
-  BlobDesc* first_in_blob_desc = FindValidBlobDescOfBnsInOp(GetBlobDesc4BnInOp, input_bns());
-  if (first_in_blob_desc) {
-    for (const std::string& obn : output_bns()) {
-      GetBlobDesc4BnInOp(obn)->CopyFrom(*first_in_blob_desc);
+  if (!val_->physical_tensor_desc_infer_fn) {
+    return Operator::InferOutBlobDescs(GetBlobDesc4BnInOp, parallel_ctx);
+  } else {
+    // default method set output blob desc (such as Dtype, is_dynamic, is_tensor_list)
+    // set out blob desc attr as first input blob desc (if has)
+    BlobDesc* first_in_blob_desc = FindValidBlobDescOfBnsInOp(GetBlobDesc4BnInOp, input_bns());
+    if (first_in_blob_desc) {
+      for (const std::string& obn : output_bns()) {
+        GetBlobDesc4BnInOp(obn)->CopyFrom(*first_in_blob_desc);
+      }
     }
-  }
-  UserOpInferContext infer_ctx(this, parallel_ctx, nullptr, GetBlobDesc4BnInOp);
+    auto LogicalBlobDesc4Ibn = [&](const std::string& bn) -> const BlobDesc& {
+      return *CHECK_JUST(GetLogicalBlobDesc4Ibn(bn));
+    };
+    auto LogicalBlobDesc4Obn = [&](const std::string& bn) -> const BlobDesc& {
+      return *CHECK_JUST(GetLogicalBlobDesc4Obn(bn));
+    };
+    const auto sbp_signature = JUST(this->sbp_signature());
+    UserOpInferContext infer_ctx(this, parallel_ctx, nullptr, GetBlobDesc4BnInOp,
+                                 LogicalBlobDesc4Ibn, LogicalBlobDesc4Obn);
 
-  JUST(val_->physical_tensor_desc_infer_fn(&infer_ctx));
-  for (const auto& pair : infer_ctx.outputs()) {
-    BlobDesc* out_blob_desc = GetBlobDesc4BnInOp(GenRepeatedBn(pair.first, pair.second));
-    out_blob_desc->set_data_type(*(infer_ctx.Dtype4ArgNameAndIndex(pair.first, pair.second)));
-    out_blob_desc->mut_shape() = *(infer_ctx.Shape4ArgNameAndIndex(pair.first, pair.second));
-    out_blob_desc->set_is_dynamic(*infer_ctx.IsDynamic4ArgNameAndIndex(pair.first, pair.second));
+    JUST(val_->physical_tensor_desc_infer_fn(&infer_ctx));
+    for (const auto& pair : infer_ctx.outputs()) {
+      BlobDesc* out_blob_desc = GetBlobDesc4BnInOp(GenRepeatedBn(pair.first, pair.second));
+      out_blob_desc->set_data_type(*(infer_ctx.Dtype4ArgNameAndIndex(pair.first, pair.second)));
+      out_blob_desc->mut_shape() = *(infer_ctx.Shape4ArgNameAndIndex(pair.first, pair.second));
+      out_blob_desc->set_is_dynamic(*infer_ctx.IsDynamic4ArgNameAndIndex(pair.first, pair.second));
+    }
+    return Maybe<void>::Ok();
   }
-  return Maybe<void>::Ok();
 }
 
 Maybe<void> UserOp::InferInplaceObn2Ibn(
@@ -429,7 +464,7 @@ Maybe<void> UserOp::InferInplaceObn2Ibn(
     HashMap<std::string, std::string>* con_inplace_obn2ibn,
     const std::function<BlobDesc*(const std::string&)>& GetBlobDesc4BnInOp,
     const ParallelContext* parallel_ctx) const {
-  UserOpInferContext infer_ctx(this, parallel_ctx, nullptr, GetBlobDesc4BnInOp);
+  UserOpInferContext infer_ctx(this, parallel_ctx, nullptr, GetBlobDesc4BnInOp, nullptr, nullptr);
   const user_op::OpKernelRegistryResult* kernel_reg_val =
       JUST(user_op::UserOpRegistryMgr::Get().GetOpKernelRegistryResult(
           op_conf().user_conf().op_type_name(),
@@ -542,15 +577,15 @@ Maybe<void> UserOp::GetSbpSignatures(
   return Maybe<void>::Ok();
 }
 
-Maybe<void> UserOp::InferOutputBlobTimeShape(
-    std::function<const Shape*(const std::string&)> GetTimeShape4BnInOp,
-    const ParallelContext* parallel_ctx, Shape* time_shape) const {
+Maybe<void> UserOp::InferOpTimeShape(
+    const std::function<const Shape*(const std::string&)>& GetTimeShape4BnInOp,
+    Shape* time_shape) const {
   if (val_->infer_output_blob_time_shape_fn) {
     UserOpInferOutputBlobTimeShapeFnContext infer_output_blob_time_shape_fn_ctx(
         this->op_conf(), GetTimeShape4BnInOp, time_shape);
     return val_->infer_output_blob_time_shape_fn(&infer_output_blob_time_shape_fn_ctx);
   } else {
-    return Operator::InferOutputBlobTimeShape(GetTimeShape4BnInOp, parallel_ctx, time_shape);
+    return Operator::InferOpTimeShape(GetTimeShape4BnInOp, time_shape);
   }
 }
 
