@@ -27,6 +27,8 @@ class UserOp final : public Operator {
   UserOp() = default;
   ~UserOp() = default;
 
+  using ArgVec = std::vector<std::pair<std::string, int32_t>>;
+
   void InitFromOpConf() override;
   Maybe<void> InferInternalBlobDescs(
       const std::function<BlobDesc*(const std::string&)>& GetBlobDesc4BnInOp,
@@ -44,6 +46,8 @@ class UserOp final : public Operator {
       const ParallelContext* parallel_ctx) const override;
   Symbol<OperatorConf> GetOpConfWithoutOpNameAndLbn() const override;
   const user_op::UserOpConfWrapper& user_op_conf() const;
+  const ArgVec& inputs() const { return inputs_; }
+  const ArgVec& outputs() const { return outputs_; }
 
  private:
   LogicalBlobId lbi4ibn(const std::string& input_bn) const override;
@@ -65,6 +69,8 @@ class UserOp final : public Operator {
 
   const user_op::OpRegistryResult* val_;
   std::unique_ptr<user_op::UserOpConfWrapper> user_op_conf_;
+  ArgVec inputs_;
+  ArgVec outputs_;
 };
 
 }  // namespace oneflow

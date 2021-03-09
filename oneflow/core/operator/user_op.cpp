@@ -116,7 +116,7 @@ class UserOpInferContext : public user_op::InferContext {
                      std::function<const BlobDesc&(const std::string&)> GetLogicalBlobDesc4Obn)
       : op_(op), parallel_ctx_(parallel_ctx), job_desc_(job_desc) {
     auto InitTensorDesc =
-        [&](const PbMap<std::string, UserOpConf::ListString>& arg_map, ArgVec* arg_vec,
+        [&](const PbMap<std::string, UserOpConf::ListString>& arg_map,
             const std::function<const BlobDesc*(const std::string&)>& GetLogicalBlobDesc4BnInOp) {
           for (auto it = arg_map.begin(); it != arg_map.end(); ++it) {
             const std::string& arg_name = it->first;
@@ -129,7 +129,6 @@ class UserOpInferContext : public user_op::InferContext {
               if (logical_blob_desc != nullptr) {
                 arg2logical_tensor_desc_.emplace(key, GenTensorDescFromBlobDesc(logical_blob_desc));
               }
-              arg_vec->emplace_back(std::make_pair(arg_name, i));
             }
           }
         };
@@ -142,8 +141,8 @@ class UserOpInferContext : public user_op::InferContext {
       return &GetLogicalBlobDesc4Obn(bn);
     };
 
-    InitTensorDesc(op->op_conf().user_conf().input(), &inputs_, LogicalBlobDesc4Ibn);
-    InitTensorDesc(op->op_conf().user_conf().output(), &outputs_, LogicalBlobDesc4Obn);
+    InitTensorDesc(op->op_conf().user_conf().input(), LogicalBlobDesc4Ibn);
+    InitTensorDesc(op->op_conf().user_conf().output(), LogicalBlobDesc4Obn);
   }
   ~UserOpInferContext() override = default;
 
@@ -176,8 +175,8 @@ class UserOpInferContext : public user_op::InferContext {
     return it->second.mut_is_dynamic();
   }
 
-  const ArgVec& inputs() const override { return inputs_; }
-  const ArgVec& outputs() const override { return outputs_; }
+  const ArgVec& inputs() const override { return op_->inputs(); }
+  const ArgVec& outputs() const override { return op_->outputs(); }
   const ParallelContext& parallel_ctx() const override { return *parallel_ctx_; };
   const JobDesc* job_desc() const override {
     CHECK_NOTNULL(job_desc_);
@@ -201,8 +200,6 @@ class UserOpInferContext : public user_op::InferContext {
 
  private:
   const UserOp* op_;
-  ArgVec inputs_;
-  ArgVec outputs_;
   const ParallelContext* parallel_ctx_;
   const JobDesc* job_desc_;
   HashMap<std::pair<std::string, int32_t>, user_op::TensorDesc> arg2tensor_desc_;
@@ -372,6 +369,17 @@ void UserOp::InitFromOpConf() {
     val_->output_arg_modify_fn(GetOutputArgModifierFn, user_conf_wrapper);
   }
   user_op_conf_.reset(new user_op::UserOpConfWrapper(op_conf()));
+
+  auto InitArgVec = [&](const PbMap<std::string, UserOpConf::ListString>& arg_map,
+                        ArgVec* arg_vec) {
+    for (const auto& it : arg_map) {
+      for (int32_t i = 0; i < it.second.s_size(); ++i) {
+        arg_vec->emplace_back(std::make_pair(it.first, i));
+      }
+    }
+  };
+  InitArgVec(op_conf().user_conf().input(), &inputs_);
+  InitArgVec(op_conf().user_conf().output(), &outputs_);
 }
 
 Maybe<void> UserOp::InferInternalBlobDescs(
