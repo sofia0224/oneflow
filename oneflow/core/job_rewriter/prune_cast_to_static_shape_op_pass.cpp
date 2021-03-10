@@ -41,6 +41,21 @@ class PruneCastToStaticShapeOpsPass final : public JobPass {
 
 Maybe<void> PruneCastToStaticShapeOpsPass::Apply(const OpGraph& op_graph,
                                                  JobBuilder* job_builder) const {
+  op_graph.ForEachNode([&](const OpNode* op_node) {
+    const auto& op_conf = op_node->op().op_conf();
+    if (!op_conf.has_user_conf()) { return; }
+    const user_op::UserOpConfWrapper user_op_conf(op_conf);
+    if (user_op_conf.op_type_name() == "matmul" || user_op_conf.op_type_name() == "batch_matmul") {
+      LOG(ERROR) << op_conf.name() << " " << user_op_conf.op_type_name() << " "
+                 << user_op_conf.attr<bool>("transpose_a") << " "
+                 << user_op_conf.attr<bool>("transpose_b") << " "
+                 << CHECK_JUST(op_node->op().GetLogicalBlobDesc4Ibn("a_0"))->shape().DebugStr()
+                 << " "
+                 << CHECK_JUST(op_node->op().GetLogicalBlobDesc4Ibn("b_0"))->shape().DebugStr()
+                 << " "
+                 << CHECK_JUST(op_node->op().GetLogicalBlobDesc4Obn("out_0"))->shape().DebugStr();
+    }
+  });
   HashMap<std::string, OperatorConf> op_name2op_conf;
   HashSet<std::string> ctrl_in_op_names;
   op_graph.ForEachNode([&](const OpNode* op_node) {
