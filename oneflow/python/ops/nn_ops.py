@@ -28,7 +28,7 @@ import oneflow.python.framework.id_util as id_util
 import oneflow.python.framework.module as module_util
 import oneflow.python.framework.remote_blob as remote_blob_util
 import oneflow.python.framework.distribute as distribute_util
-from oneflow.python.oneflow_export import oneflow_export
+from oneflow.python.oneflow_export import oneflow_export, stable_api
 import oneflow._oneflow_internal
 
 IntPair = Tuple[int, int]
@@ -868,6 +868,7 @@ def group_normalization(
 
 
 @oneflow_export("nn.InstanceNorm1d")
+@stable_api
 def instance_normalization1d(
     x: oneflow._oneflow_internal.BlobDesc,
     eps: float = 1e-05,
@@ -937,6 +938,7 @@ def instance_normalization1d(
 
 
 @oneflow_export("nn.InstanceNorm2d")
+@stable_api
 def instance_normalization2d(
     x: oneflow._oneflow_internal.BlobDesc,
     eps: float = 1e-05,
@@ -992,6 +994,7 @@ def instance_normalization2d(
 
 
 @oneflow_export("nn.InstanceNorm3d")
+@stable_api
 def instance_normalization3d(
     x: oneflow._oneflow_internal.BlobDesc,
     eps: float = 1e-05,
@@ -3848,13 +3851,6 @@ def bce_with_logits_loss(
         reduction
     )
 
-    assert pos_weight.shape[0] == input.shape[-1], (
-        "The length of `pos_weight` must be equal to the number of classes. "
-        "Found the length of pos_weight {} vs classes {}".format(
-            pos_weight.shape[0], input.shape[-1]
-        )
-    )
-
     if name is None:
         name = id_util.UniqueStr("BCEWithLogitsLoss")
 
@@ -3863,6 +3859,12 @@ def bce_with_logits_loss(
     _neg_max_val = flow.math.negative(_max_val)
 
     if pos_weight:
+        assert pos_weight.shape[0] == input.shape[-1], (
+            "The length of `pos_weight` must be equal to the number of classes. "
+            "Found the length of pos_weight {} vs classes {}".format(
+                pos_weight.shape[0], input.shape[-1]
+            )
+        )
         _log_weight = ((pos_weight - 1) * target) + 1
         _loss = (1 - target) * input + _log_weight * (
             flow.math.log(
